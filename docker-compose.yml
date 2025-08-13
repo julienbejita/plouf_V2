@@ -5,7 +5,7 @@ services:
       - "5002:80"
     restart: unless-stopped
     volumes:
-      - plouf_data:/app/players.db
+      - plouf_data:/app/data
 
 volumes:
   plouf_data:
