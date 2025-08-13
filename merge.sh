@@ -155,4 +155,44 @@ fi
 # ============================ PHASE 1 : préparation ============================
 # Se placer sur la branche par défaut si besoin
 if [[ "$CURR" != "$DEFAULT" ]]; then
-  echo "[INFO] Vous êtes sur '${CUR
+  echo "[INFO] Vous êtes sur '${CURR}'. Le flux de test démarre depuis '${DEFAULT}'."
+  echo "[ACTION] Bascule vers '${DEFAULT}'..."
+  git checkout "${DEFAULT}"
+fi
+
+echo
+echo "[PRÉPARATION] Récupération des branches distantes (origin)..."
+git fetch origin --prune
+
+echo
+echo "--- Branches distantes disponibles (origin) ---"
+git for-each-ref --format='%(refname:short)' refs/remotes/origin | sed 's#^origin/##' | grep -v '^HEAD$' || true
+echo "-----------------------------------------------"
+
+echo
+read -rp "Quelle branche distante voulez-vous tester ? (ex: codex/remove-import/export-buttons ou origin/codex/remove-import/export-buttons) : " BRANCH_INPUT
+BRANCH="${BRANCH_INPUT#origin/}"  # normalise: enlève "origin/" s'il est présent
+
+if [[ -z "${BRANCH}" ]]; then
+  echo "[ANNULATION] Aucune branche saisie."
+  exit 0
+fi
+
+if ! git ls-remote --heads origin "${BRANCH}" >/dev/null 2>&1; then
+  echo "[ERREUR] La branche 'origin/${BRANCH}' n'existe pas."
+  exit 1
+fi
+
+# Crée/MAJ la branche temporaire locale depuis origin/<BRANCH>
+TEMP="_merge_tmp_${BRANCH//\//_}"
+echo "[ACTION] Création/MàJ de '${TEMP}' depuis 'origin/${BRANCH}'..."
+git checkout -B "${TEMP}" "origin/${BRANCH}"
+
+# Enregistre le mapping source -> pour push WIP correct plus tard
+git config "branch.${TEMP}.ploufSource" "${BRANCH}"
+
+deploy
+echo
+echo "✅ Branche de test prête : '${TEMP}'."
+echo "➡ Vous pouvez maintenant tester l'application."
+echo "ℹ️ Relancez ce script depuis '${TEMP}' pour ACCEPTER (merge) ou REFUSER (retour ${DEFAULT} + suppression)."
