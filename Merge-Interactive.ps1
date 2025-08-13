@@ -1,114 +1,128 @@
-# Usage: double-cliquer via .bat ou:
+# Usage: double-cliquer via merge.bat ou:
 # powershell -ExecutionPolicy Bypass -File .\Merge-Interactive.ps1
+
+param()
 
 $ErrorActionPreference = "Stop"
 
-function Run($args) {
-  & git @args
-  if ($LASTEXITCODE -ne 0) {
-    throw ("git " + ($args -join " "))
-  }
+function Run {
+  param([string[]]$Args)
+  if (-not $Args -or $Args.Count -eq 0) { throw "Internal error: Run() called with no git args." }
+  & git @Args
+  if ($LASTEXITCODE -ne 0) { throw ("git {0}" -f ($Args -join " ")) }
 }
 
 Write-Host "=== Interactive Git Merge Helper ==="
 
-# Aller dans le dossier du script (suppose le script dans la racine du repo)
+# Aller à la racine du repo (dossier du script)
 Set-Location -Path (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
-# safe.directory (utile sur partage reseau)
+# Marquer le repo comme safe (utile sur partage réseau)
 $repoPath = (Resolve-Path .).Path
 git config --global --add safe.directory "$repoPath" | Out-Null
 
-# Check clean worktree
+# Stash automatique si working tree non clean
 $dirty = (git status --porcelain)
+$stashed = $false
 if ($dirty) {
-  Write-Host "Working tree not clean. Please commit or stash your changes, then retry." -ForegroundColor Yellow
-  exit 1
+  Write-Host "Working tree not clean — stashing changes temporarily..." -ForegroundColor Yellow
+  Run @("stash","push","--include-untracked","-m","temp-stash-before-merge")
+  $stashed = $true
 }
 
-# Remote (par defaut: origin)
+# Lister les remotes pour info
+Write-Host "`nRemotes disponibles :" -ForegroundColor Cyan
+git remote -v
+
+# Demander le remote avec valeur par défaut 'origin'
 $Remote = Read-Host "Remote name [origin]"
-if ([string]::IsNullOrWhiteSpace($Remote)) {
-    $Remote = "origin"
-}
+if ([string]::IsNullOrWhiteSpace($Remote)) { $Remote = "origin" }
 
-# Fetch / prune
-Write-Host "Fetching from $remote..."
-Run @("fetch",$remote,"--prune")
+Write-Host "Fetching from $Remote..."
+Run @("fetch",$Remote,"--prune")
 
-# Demander la branche source
-$branch = Read-Host "Enter branch to fetch (ex: codex/fix-sqlite_cantopen-error)"
-if ([string]::IsNullOrWhiteSpace($branch)) {
+# Demander la branche distante à récupérer
+$Branch = Read-Host "Enter branch to fetch (ex: codex/fix-sqlite_cantopen-error)"
+if ([string]::IsNullOrWhiteSpace($Branch)) {
   Write-Host "No branch provided. Exit."
+  if ($stashed) { Write-Host "Restoring stashed changes..." -ForegroundColor Yellow; git stash pop | Out-Null }
   exit 0
 }
 
-# Verifier existence branche distante
-$exists = git ls-remote --heads $remote $branch
+# Vérifier existence de la branche distante
+$exists = git ls-remote --heads $Remote $Branch
 if ([string]::IsNullOrWhiteSpace($exists)) {
-  Write-Host "Remote branch '$branch' does not exist on '$remote'." -ForegroundColor Red
+  Write-Host "Remote branch '$Branch' does not exist on '$Remote'." -ForegroundColor Red
+  if ($stashed) { Write-Host "Restoring stashed changes..." -ForegroundColor Yellow; git stash pop | Out-Null }
   exit 1
 }
 
-# Creer/maj branche temporaire depuis la branche distante
-$temp = "_merge_tmp_" + ($branch -replace "[^A-Za-z0-9_\-]", "_")
-Write-Host "Checking out temp local branch '$temp' from '$remote/$branch'..."
-Run @("checkout","-B",$temp,"$remote/$branch")
+# Créer/mettre à jour une branche temporaire locale depuis la distante
+$Temp = "_merge_tmp_" + ($Branch -replace "[^A-Za-z0-9_\-]", "_")
+Write-Host "Checking out temp local branch '$Temp' from '$Remote/$Branch'..."
+Run @("checkout","-B",$Temp,"$Remote/$Branch")
 
-# Detecter branche par defaut (main/master)
-$default = "main"
+# Détecter la branche par défaut (main/master)
+$Default = "main"
 git show-ref --verify --quiet refs/heads/main
 if ($LASTEXITCODE -ne 0) {
   git show-ref --verify --quiet refs/heads/master
-  if ($LASTEXITCODE -eq 0) { $default = "master" }
+  if ($LASTEXITCODE -eq 0) { $Default = "master" }
 }
-Write-Host ("Default branch detected: {0}" -f $default)
+Write-Host ("Default branch detected: {0}" -f $Default)
 
-# Option: merge dans main ?
-$ans = Read-Host ("Merge '{0}' into '{1}' now? (y/N)" -f $branch, $default)
+# Proposer le merge maintenant
+$ans = Read-Host ("Merge '{0}' into '{1}' now? (y/N)" -f $Branch, $Default)
 if ($ans -match '^(y|Y)$') {
-  # Update main/master
-  Run @("checkout",$default)
-  Run @("pull",$remote,$default,"--no-rebase")
+  # Mettre la branche par défaut à jour
+  Run @("checkout",$Default)
+  Run @("pull",$Remote,$Default,"--no-rebase")
 
-  # Merge no-ff pour conserver l'historique complet
+  # Merge no-ff pour conserver l'historique
   try {
-    Run @("merge","--no-ff",$temp)
+    Run @("merge","--no-ff",$Temp)
   } catch {
     Write-Host "Merge conflicts detected. Resolve them, then run:" -ForegroundColor Yellow
     Write-Host "  git add ."
-    Write-Host "  git commit"
-    Write-Host ("  git push {0} {1}" -f $remote, $default)
-    Write-Host "Temp branch kept for debug: $temp"
+    Write-Host ("  git commit")
+    Write-Host ("  git push {0} {1}" -f $Remote, $Default)
+    Write-Host "Temp branch kept for debug: $Temp"
+    if ($stashed) { Write-Host "Restoring stashed changes..." -ForegroundColor Yellow; git stash pop | Out-Null }
     exit 1
   }
 
   # Push
-  Run @("push",$remote,$default)
+  Run @("push",$Remote,$Default)
   Write-Host "Merge completed and pushed."
 
-  # Nettoyage temp local
-  try { Run @("branch","-D",$temp) } catch { }
+  # Nettoyage de la branche temporaire locale
+  try { Run @("branch","-D",$Temp) } catch { }
 
-  # Option: supprimer la branche source distante (si voulu)
-  $del = Read-Host ("Delete remote source branch '{0}' on '{1}'? (y/N)" -f $branch, $remote)
+  # Option: supprimer la branche source distante
+  $del = Read-Host ("Delete remote source branch '{0}' on '{1}'? (y/N)" -f $Branch, $Remote)
   if ($del -match '^(y|Y)$') {
-    try { Run @("push",$remote,"--delete",$branch) } catch { Write-Host "Cannot delete remote branch (permissions?)." -ForegroundColor Yellow }
+    try { Run @("push",$Remote,"--delete",$Branch) } catch { Write-Host "Cannot delete remote branch (permissions?)." -ForegroundColor Yellow }
   }
 
   # Option: supprimer la branche source locale (si existe)
-  $hasLocal = git show-ref --verify --quiet ("refs/heads/" + $branch)
+  git show-ref --verify --quiet ("refs/heads/" + $Branch)
   if ($LASTEXITCODE -eq 0) {
-    $dell = Read-Host ("Delete local branch '{0}'? (y/N)" -f $branch)
-    if ($dell -match '^(y|Y)$') { try { Run @("branch","-D",$branch) } catch { } }
+    $dell = Read-Host ("Delete local branch '{0}'? (y/N)" -f $Branch)
+    if ($dell -match '^(y|Y)$') { try { Run @("branch","-D",$Branch) } catch { } }
   }
 
 } else {
-  Write-Host "No merge executed. You are on temp branch '$temp' tracking '$remote/$branch'."
-  Write-Host "You can later run:"
-  Write-Host "  git checkout $default"
-  Write-Host "  git merge --no-ff $temp"
-  Write-Host "  git push $remote $default"
+  Write-Host "No merge executed. You are on temp branch '$Temp' tracking '$Remote/$Branch'."
+  Write-Host "Later you can run:"
+  Write-Host "  git checkout $Default"
+  Write-Host "  git merge --no-ff $Temp"
+  Write-Host "  git push $Remote $Default"
+}
+
+# Restaure le stash si on en a créé un
+if ($stashed) {
+  Write-Host "Restoring stashed changes..." -ForegroundColor Yellow
+  git stash pop | Out-Null
 }
 
 Write-Host "Done."
