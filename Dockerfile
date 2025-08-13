@@ -5,10 +5,8 @@ WORKDIR /app
 # Copie package.json et lockfile (si tu en as un)
 COPY package*.json ./
 
-# Installe les dépendances + Tailwind/PostCSS
-RUN npm install --no-audit --no-fund && \
-    npm install -D tailwindcss postcss autoprefixer && \
-    npx tailwindcss init -p
+# Installe les dépendances
+RUN npm install --no-audit --no-fund
 
 # Copie tout le reste du projet
 COPY . .
