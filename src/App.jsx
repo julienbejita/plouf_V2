@@ -129,8 +129,8 @@ export default function PloufPloufBaby() {
   };
 
   const copyTeams = async () => {
-    const text = teams.map((t, i) => `Équipe ${i + 1}: ${t.map(p => p.name).join(", ")}`).join("
-");
+    const text = teams.map((t, i) => `Équipe ${i + 1}: ${t.map(p => p.name).join(", ")}`).join("\n");
+
     try {
       await navigator.clipboard.writeText(text);
       setCopyOK(true);
