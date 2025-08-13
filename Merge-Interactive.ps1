@@ -27,8 +27,10 @@ if ($dirty) {
 }
 
 # Remote (par defaut: origin)
-$remote = Read-Host "Remote name [origin]"
-if ([string]::IsNullOrWhiteSpace($remote)) { $remote = "origin" }
+$Remote = Read-Host "Remote name [origin]"
+if ([string]::IsNullOrWhiteSpace($Remote)) {
+    $Remote = "origin"
+}
 
 # Fetch / prune
 Write-Host "Fetching from $remote..."
