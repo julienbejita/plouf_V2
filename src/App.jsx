@@ -69,8 +69,11 @@ export default function PloufPloufBaby() {
     setPlayers(prev => prev.map(pl => pl.id === id ? { ...pl, present: !pl.present } : pl));
   };
   const removePlayer = async (id) => {
+    const p = players.find(pl => pl.id === id);
+    if (!p) return;
+    if (!window.confirm(`Supprimer ${p.name} ?`)) return;
     await fetch(`/api/players/${id}`, { method: "DELETE" });
-    setPlayers(prev => prev.filter(p => p.id !== id));
+    setPlayers(prev => prev.filter(pl => pl.id !== id));
   };
   const toggleAll = async (val) => {
     await fetch("/api/players/toggleAll", {
