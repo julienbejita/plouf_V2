@@ -122,7 +122,13 @@ export default function PloufPloufBaby() {
     reader.onload = () => {
       try {
         const json = JSON.parse(String(reader.result));
-        if (Array.isArray(json.players)) setPlayers(json.players.map(p => ({ id: p.id || uid(), name: p.name, present: !!p.present })));
+        if (Array.isArray(json.players)) setPlayers(
+          json.players.map(p => ({
+            id: p.id || uid(),
+            name: p.name,
+            present: p.present !== false,
+          }))
+        );
       } catch {}
     };
     reader.readAsText(file);
