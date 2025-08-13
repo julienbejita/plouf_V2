@@ -123,4 +123,6 @@ exit /b 0
 
 :error
 echo.
-echo ERROR: a git command failed. Aborting
+echo ERROR: a git command failed. Aborting.
+endlocal
+exit /b 1
