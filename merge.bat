@@ -1,43 +1,21 @@
 @echo off
 setlocal enabledelayedexpansion
-REM === Interactive Git Merge Helper (.BAT only) ===
-REM - Commit WIP si repo sale (toujours), pull/push uniquement si upstream existe
-REM - Si on est sur _merge_tmp_*, on bascule sur la branche par defaut APRES le WIP commit
+REM ============================================================
+REM  Merge interactif (FR) – 2 phases : TEST puis DECISION
+REM  - Phase 1 (sur main/master) : liste des branches distantes,
+REM    choix -> creation d'une branche temporaire _merge_tmp_* et checkout.
+REM  - Phase 2 (sur _merge_tmp_*) : [1] merge --no-ff vers main/master,
+REM    push et suppression ; [2] abandon -> retour main/master et suppression.
+REM  - Sauvegarde locale : commit WIP; pull --rebase/push uniquement si upstream.
+REM ============================================================
 
 cd /d "%~dp0"
-echo === Interactive Git Merge Helper ===
+echo === Assistant de merge interactif (FR) ===
 
-REM 0) Safe dir
+REM -- Safe directory (partages reseau) --
 git config --global --add safe.directory "%CD%" >NUL 2>&1
 
-REM 1) Branche courante
-for /f "delims=" %%A in ('git rev-parse --abbrev-ref HEAD') do set CURR=%%A
-if "%CURR%"=="" (
-  echo Impossible de determiner la branche courante. Abandon.
-  goto :error
-)
-
-REM 2) Si repo non clean: commit WIP
-set DIRTY=
-for /f %%A in ('git status --porcelain') do ( set DIRTY=1 & goto :dirtfound )
-goto :after_dirty
-:dirtfound
-echo Working tree not clean — creating a WIP commit on "%CURR%"...
-git add . || goto :error
-git commit -m "sauvegarde avant de recuperer la branche provisoire" || goto :error
-
-REM 2b) Pull --rebase + push uniquement si un upstream est configure
-git rev-parse --abbrev-ref --symbolic-full-name @{u} >NUL 2>&1
-if errorlevel 1 (
-  echo No upstream configured for "%CURR%". Skipping pull/push for WIP commit.
-) else (
-  echo Rebase on top of upstream of "%CURR%" ...
-  git pull --rebase || goto :error
-  git push || goto :error
-)
-:after_dirty
-
-REM 3) Detecter branche par defaut (main/master)
+REM -- Detecter branche par defaut (main/master) --
 set "DEFAULT=main"
 git show-ref --verify --quiet refs/heads/main
 if errorlevel 1 (
@@ -45,84 +23,151 @@ if errorlevel 1 (
   if not errorlevel 1 set "DEFAULT=master"
 )
 
-REM 4) Si on est sur une branche temporaire, revenir maintenant sur la branche par defaut
-if /I "%CURR:~0,11%"=="_merge_tmp_" (
-  echo You are on temp branch "%CURR%". Switching to "%DEFAULT%"...
-  git checkout "%DEFAULT%" || goto :error
-  for /f "delims=" %%A in ('git rev-parse --abbrev-ref HEAD') do set CURR=%%A
+REM -- Branche courante --
+for /f "delims=" %%A in ('git rev-parse --abbrev-ref HEAD') do set CURR=%%A
+if "%CURR%"=="" (
+  echo [ERREUR] Impossible de determiner la branche courante.
+  goto :error
 )
 
-REM 5) Choix du remote (defaut origin)
-echo.
-echo Remotes disponibles:
-git remote -v
-echo.
-set "REMOTE=origin"
-set /p REMOTE=Remote name [origin]: 
-if "%REMOTE%"=="" set "REMOTE=origin"
+REM --------- FONCTIONS UTIL ---------
+:maybe_wip_commit
+REM Si repo non clean: commit WIP; si upstream existe -> pull --rebase + push
+set DIRTY=
+for /f %%Z in ('git status --porcelain') do ( set DIRTY=1 & goto :do_wip )
+goto :wip_done
+:do_wip
+echo [INFO] Modifications locales detectees sur "%CURR%" — creation d'un commit de sauvegarde...
+git add . || goto :error
+git commit -m "sauvegarde avant operation de test/merge" || goto :error
 
-echo Fetching from %REMOTE%...
-git fetch %REMOTE% --prune || goto :error
+REM Upstream ?
+git rev-parse --abbrev-ref --symbolic-full-name @{u} >NUL 2>&1
+if errorlevel 1 (
+  echo [INFO] Pas d'upstream configure pour "%CURR%". On n'effectue pas de pull/push pour le WIP.
+) else (
+  echo [INFO] Mise a jour locale (pull --rebase) puis push du WIP...
+  git pull --rebase || goto :error
+  git push || goto :error
+)
+:wip_done
+goto :eof
 
-REM 6) Demander la branche distante a recuperer
+:checkout_default
+git checkout "%DEFAULT%" || goto :error
+for /f "delims=" %%A in ('git rev-parse --abbrev-ref HEAD') do set CURR=%%A
+goto :eof
+
+:list_remote_branches
+echo.
+echo --- Branches distantes sur origin --- 
+REM Filtrer les lignes HEAD et afficher uniquement origin/*
+git branch -r | findstr /R "^  origin/" | findstr /V "origin/HEAD"
+echo -------------------------------------
+goto :eof
+REM --------------------------------------
+
+REM ===================== PHASE 2 : sur branche temporaire =====================
+if /I "%CURR:~0,11%"=="_merge_tmp_" (
+  echo.
+  echo [ETAPE TEST] Vous etes sur la branche temporaire "%CURR%".
+  echo Choisissez une action :
+  echo   1 ^) Accepter : fusionner dans "%DEFAULT%" (merge --no-ff) et pousser
+  echo   2 ^) Refuser  : revenir sur "%DEFAULT%" et supprimer la branche temporaire
+  echo   3 ^) Annuler  : ne rien faire
+  set /p CHX=Votre choix [1/2/3] : 
+  if "%CHX%"=="1" (
+    call :maybe_wip_commit
+    echo [INFO] Passage sur "%DEFAULT%" et mise a jour...
+    call :checkout_default
+    git pull origin %DEFAULT% --no-rebase || goto :error
+
+    echo [ACTION] Fusion --no-ff de "%CURR%" vers "%DEFAULT%"...
+    git merge --no-ff "%CURR%"
+    if errorlevel 1 (
+      echo.
+      echo [CONFLIT] Des conflits existent. Corrigez puis lancez :
+      echo   git add .
+      echo   git commit
+      echo   git push origin %DEFAULT%
+      echo La branche temporaire "%CURR%" est conservee.
+      goto :done
+    )
+
+    git push origin %DEFAULT% || goto :error
+    echo [OK] Fusion envoyee sur origin/%DEFAULT%.
+
+    echo [NETTOYAGE] Suppression de la branche temporaire locale "%CURR%"...
+    git branch -D "%CURR%" >NUL 2>&1
+
+    echo [FIN] Operation terminee.
+    goto :done
+  ) else if "%CHX%"=="2" (
+    call :maybe_wip_commit
+    echo [INFO] Retour sur "%DEFAULT%"...
+    call :checkout_default
+    echo [NETTOYAGE] Suppression de la branche temporaire locale "%CURR%"...
+    REM ATTENTION: on a change de branche, l'ancienne temp est inconnue ici.
+    REM On recalcule son nom a partir de reflog si besoin, mais plus simple:
+    REM demander confirmation et supprimer toutes _merge_tmp_* existantes.
+    for /f "delims=" %%B in ('git for-each-ref --format^="%%(refname:short)" refs/heads/_merge_tmp_* 2^>NUL') do (
+      git branch -D "%%B" >NUL 2>&1
+    )
+    echo [OK] Branche(s) temporaire(s) supprimee(s). Retour sur "%DEFAULT%".
+    goto :done
+  ) else (
+    echo [ANNULATION] Aucune operation effectuee.
+    goto :done
+  )
+)
+
+REM ===================== PHASE 1 : sur main/master =====================
+if /I not "%CURR%"=="%DEFAULT%" (
+  echo.
+  echo [INFO] Vous etes sur "%CURR%". Le flux de test commence depuis "%DEFAULT%".
+  call :maybe_wip_commit
+  echo [INFO] Bascule vers "%DEFAULT%"...
+  call :checkout_default
+)
+
+echo.
+echo [ETAPE PREPARATION] Liste des branches distantes disponibles (origin) :
+call :list_remote_branches
 echo.
 set "BRANCH="
-set /p BRANCH=Branch to fetch (ex: codex/fix-sqlite_cantopen-error): 
+set /p BRANCH=Quelle branche distante voulez-vous tester ? (ex: codex/remove-import/export-buttons) : 
 if "%BRANCH%"=="" (
-  echo No branch provided. Exit.
+  echo [ANNULATION] Aucune branche saisie.
   goto :done
 )
 
-REM 7) Verifier existence de la branche distante
+REM Verification existence distante
 set FOUND=
-for /f "tokens=1" %%A in ('git ls-remote --heads %REMOTE% %BRANCH%') do ( set FOUND=1 )
+for /f "tokens=1" %%Z in ('git ls-remote --heads origin %BRANCH%') do ( set FOUND=1 )
 if not defined FOUND (
-  echo Remote branch "%BRANCH%" does not exist on "%REMOTE%".
+  echo [ERREUR] La branche "origin/%BRANCH%" n'existe pas.
   goto :done
 )
 
-REM 8) Creer/maj branche temporaire locale depuis origin/BRANCH
+REM Creation/maj branche temporaire locale depuis origin/BRANCH
 set "TEMP=_merge_tmp_%BRANCH:/=_%"
-echo Checking out temp local branch "%TEMP%" from "%REMOTE%/%BRANCH%"...
-git checkout -B "%TEMP%" "%REMOTE%/%BRANCH%" || goto :error
+echo [ACTION] Creation de la branche temporaire "%TEMP%" depuis "origin/%BRANCH%"...
+git checkout -B "%TEMP%" "origin/%BRANCH%" || goto :error
 
-REM 9) Merge dans la branche par defaut
-echo Default branch detected: %DEFAULT%
-set ANSW=
-set /p ANSW=Merge "%BRANCH%" into "%DEFAULT%" now? (y/N): 
-if /I not "%ANSW%"=="Y" (
-  echo No merge executed. You are on temp branch "%TEMP%" tracking "%REMOTE%/%BRANCH%".
-  goto :done
-)
-
-git checkout "%DEFAULT%" || goto :error
-git pull %REMOTE% %DEFAULT% --no-rebase || goto :error
-
-echo Merging --no-ff "%TEMP%" into "%DEFAULT%"...
-git merge --no-ff "%TEMP%"
-if errorlevel 1 (
-  echo.
-  echo Merge conflicts detected. Resolve them, then run:
-  echo   git add .
-  echo   git commit
-  echo   git push %REMOTE% %DEFAULT%
-  echo Temp branch kept: %TEMP%
-  goto :done
-)
-
-git push %REMOTE% %DEFAULT% || goto :error
-echo Merge completed and pushed.
-
-REM 10) Nettoyage: supprimer la branche temporaire locale
-git branch -D "%TEMP%" >NUL 2>&1
+echo.
+echo [OK] Branche chargee : "%TEMP%".
+echo Vous pouvez maintenant TESTER l'application sur cette branche.
+echo Relancez ce script pour DECIDER (accepter/refuser) les modifications.
+goto :done
 
 :done
-echo Done.
+echo.
+echo Terminé.
 endlocal
 exit /b 0
 
 :error
 echo.
-echo ERROR: a git command failed. Aborting.
+echo [ERREUR] Une commande git a echoue. Abandon.
 endlocal
 exit /b 1
