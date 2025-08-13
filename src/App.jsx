@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shuffle, UserPlus, Trash2, Download, Upload, Users, Copy, Dice6, Settings2, CheckCircle2, XCircle, Search } from "lucide-react";
+import { Shuffle, UserPlus, Trash2, Users, Copy, Dice6, Settings2, CheckCircle2, XCircle, Search } from "lucide-react";
 
 // Utils
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -133,40 +133,6 @@ export default function PloufPloufBaby() {
     requestAnimationFrame(spin);
   };
 
-  // Export/Import
-  const exportData = () => {
-    const blob = new Blob([JSON.stringify({ players }, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "plouf-plouf-players.json"; a.click();
-    URL.revokeObjectURL(url);
-  };
-  const importFileRef = useRef(null);
-  const importData = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const json = JSON.parse(String(reader.result));
-        if (Array.isArray(json.players)) {
-          const imported = json.players.map(p => ({
-            id: p.id || uid(),
-            name: p.name,
-            present: p.present !== false,
-          }));
-          setPlayers(imported);
-          await fetch("/api/players", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(imported),
-          });
-        }
-      } catch {}
-    };
-    reader.readAsText(file);
-  };
-
   const copyTeams = async () => {
     const text = teams.map((t, i) => `Équipe ${i + 1}: ${t.map(p => p.name).join(", ")}`).join("\n");
 
@@ -180,17 +146,8 @@ export default function PloufPloufBaby() {
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 p-3 sm:p-6">
       <div className="max-w-5xl mx-auto">
-        <header className="flex items-center justify-between mb-4 sm:mb-6">
+        <header className="flex items-center mb-4 sm:mb-6">
           <h1 className="text-xl sm:text-3xl font-bold">Plouf Plouf · Équipes Baby-foot</h1>
-          <div className="flex gap-2">
-            <button onClick={exportData} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl sm:rounded-2xl shadow bg-white active:scale-[.98]">
-              <Download className="w-4 h-4"/> Export
-            </button>
-            <button onClick={() => importFileRef.current?.click()} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl sm:rounded-2xl shadow bg-white active:scale-[.98]">
-              <Upload className="w-4 h-4"/> Import
-            </button>
-            <input ref={importFileRef} type="file" accept="application/json" className="hidden" onChange={importData} />
-          </div>
         </header>
 
         {/* Barre recherche + ajout */}
