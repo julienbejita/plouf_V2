@@ -19,27 +19,48 @@ if [[ -z "${CURR:-}" ]]; then
   exit 1
 fi
 
-# --- Petite fonction utilitaire pour afficher et exécuter docker compose ---
+# --- util: déploiement docker ---
 deploy() {
-  echo "[DÉPLOIEMENT] Reconstruction et relance Docker (docker compose up --build -d)..."
+  echo "[DÉPLOIEMENT] docker compose up --build -d"
   docker compose up --build -d
 }
 
-# 3) Sauvegarde des modifs locales (WIP commit) + push adapté
+# --- util: MAJ rapide du main (tes 5 commandes) ---
+quick_update_main() {
+  echo "[MAJ] Passage sur '${DEFAULT}'..."
+  git checkout "${DEFAULT}"
+
+  echo "[MAJ] Ajout de tous les fichiers..."
+  if [[ -n "$(git status --porcelain)" ]]; then
+    git add .
+    read -rp "[MAJ] Message de commit [Mise à jour des fichiers en cours] : " MSG
+    MSG="${MSG:-Mise à jour des fichiers en cours}"
+    git commit -m "$MSG"
+  else
+    echo "[MAJ] Aucun changement à committer."
+  fi
+
+  echo "[MAJ] Récupération distante (pull --rebase)..."
+  git pull origin "${DEFAULT}" --rebase
+
+  echo "[MAJ] Push vers GitHub..."
+  git push origin "${DEFAULT}"
+
+  echo "✅ MAJ rapide du main terminée."
+}
+
+# 3) Sauvegarde des modifs locales (WIP) + push adapté
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "[INFO] Modifications locales détectées sur ${CURR} — création d'un commit de sauvegarde..."
   git add .
   git commit -m "WIP: sauvegarde avant test/merge"
 
-  # Cas particulier : si on est sur une branche temporaire _merge_tmp_*,
-  # on pousse le WIP vers la branche distante d'origine (mapping stocké en config Git)
   if [[ "$CURR" == _merge_tmp_* ]]; then
     SRC_BRANCH="$(git config --get "branch.${CURR}.ploufSource" || true)"
     if [[ -n "${SRC_BRANCH:-}" ]]; then
       echo "[INFO] Push du WIP vers la branche distante d'origine: origin/${SRC_BRANCH}"
       git push origin HEAD:"${SRC_BRANCH}"
     else
-      # Si pas de mapping (cas très rare), on tente l'upstream si présent, sinon on informe.
       if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
         echo "[INFO] Push du WIP vers l'upstream de ${CURR}..."
         git pull --rebase
@@ -49,8 +70,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
       fi
     fi
   else
-    # Branche normale : pousser seulement si upstream configuré
-    if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/devnull 2>&1; then
+    if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
       echo "[INFO] Mise à jour locale (pull --rebase) puis push du WIP..."
       git pull --rebase
       git push
@@ -60,15 +80,21 @@ if [[ -n "$(git status --porcelain)" ]]; then
   fi
 fi
 
-# ============================ PHASE 2 (test) ============================
-# Si on est déjà sur une branche temporaire, proposer Accepter/Refuser
+# ============================ PHASE 2 : déjà sur branche temporaire ============================
 if [[ "$CURR" == _merge_tmp_* ]]; then
   echo
   echo "[PHASE TEST] Vous êtes sur la branche temporaire : ${CURR}"
   echo "  1) ACCEPTER : fusionner dans '${DEFAULT}' (merge --no-ff), pousser et déployer"
   echo "  2) REFUSER  : revenir sur '${DEFAULT}' et supprimer la branche temporaire"
   echo "  3) ANNULER  : ne rien faire"
-  read -rp "Votre choix [1/2/3] : " CHX
+  echo "  4) MAJ rapide du main (add/commit/pull --rebase/push)"
+  read -rp "Votre choix [1/2/3/4] : " CHX
+
+  if [[ "$CHX" == "4" ]]; then
+    quick_update_main
+    echo "ℹ️ Relancez si besoin pour poursuivre l’acceptation/refus."
+    exit 0
+  fi
 
   if [[ "$CHX" == "1" ]]; then
     echo "[ACTION] Passage sur '${DEFAULT}' et mise à jour..."
@@ -88,6 +114,16 @@ if [[ "$CURR" == _merge_tmp_* ]]; then
     echo "[OK] Fusion poussée sur origin/${DEFAULT}."
     echo "[NETTOYAGE] Suppression de la branche temporaire locale '${CURR}'..."
     git branch -D "${CURR}" || true
+
+    # ➕ NOUVEAU : proposer de supprimer aussi la branche distante d'origine
+    SRC_BRANCH="$(git config --get "branch.${CURR}.ploufSource" || true)"
+    if [[ -n "${SRC_BRANCH:-}" ]]; then
+      read -rp "[OPTION] Supprimer aussi la branche distante 'origin/${SRC_BRANCH}' ? (y/N) : " DELR
+      if [[ "${DELR,,}" == "y" ]]; then
+        echo "[ACTION] Suppression de origin/${SRC_BRANCH}..."
+        git push origin --delete "${SRC_BRANCH}" || true
+      fi
+    fi
 
     deploy
     echo "✅ Terminé."
@@ -109,8 +145,14 @@ if [[ "$CURR" == _merge_tmp_* ]]; then
   fi
 fi
 
-# ============================ PHASE 1 (préparation) ============================
-# Créer la branche de test temporaire à partir d'une branche distante
+# ============================ PHASE 1 : préparation ============================
+# Option : MAJ rapide du main avant de choisir la branche de test
+read -rp "[OPTION] Faire d’abord une MAJ rapide du main (add/commit/pull --rebase/push) ? (y/N) : " DOUP
+if [[ "${DOUP,,}" == "y" ]]; then
+  quick_update_main
+fi
+
+# Se placer sur la branche par défaut si besoin
 if [[ "$CURR" != "$DEFAULT" ]]; then
   echo "[INFO] Vous êtes sur '${CURR}'. Le flux de test démarre depuis '${DEFAULT}'."
   echo "[ACTION] Bascule vers '${DEFAULT}'..."
@@ -123,7 +165,6 @@ git fetch origin --prune
 
 echo
 echo "--- Branches distantes disponibles (origin) ---"
-# Affiche sans le préfixe origin/ pour éviter la confusion
 git for-each-ref --format='%(refname:short)' refs/remotes/origin | sed 's#^origin/##' | grep -v '^HEAD$' || true
 echo "-----------------------------------------------"
 
@@ -136,7 +177,7 @@ if [[ -z "${BRANCH}" ]]; then
   exit 0
 fi
 
-if ! git ls-remote --heads origin "${BRANCH}" >/dev/null 2>&1; then
+if ! git ls-remote --heads origin "${BRANCH}" >/devnull 2>&1; then
   echo "[ERREUR] La branche 'origin/${BRANCH}' n'existe pas."
   exit 1
 fi
