@@ -3,6 +3,7 @@ import { open } from 'sqlite';
 import sqlite3 from 'sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs/promises';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,8 +11,10 @@ const __dirname = path.dirname(__filename);
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 async function createDb() {
+  const dbPath = path.join(__dirname, 'data', 'players.db');
+  await fs.mkdir(path.dirname(dbPath), { recursive: true });
   const db = await open({
-    filename: path.join(__dirname, 'players.db'),
+    filename: dbPath,
     driver: sqlite3.Database,
   });
   await db.exec(`CREATE TABLE IF NOT EXISTS players (
