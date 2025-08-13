@@ -11,12 +11,7 @@ const loadLS = (k, d) => {
 
 export default function PloufPloufBaby() {
   // State
-  const [players, setPlayers] = useState(() => loadLS("pp_players", [
-    { id: uid(), name: "Alice", present: true },
-    { id: uid(), name: "Bob", present: true },
-    { id: uid(), name: "Charly", present: true },
-    { id: uid(), name: "Dora", present: true },
-  ]));
+  const [players, setPlayers] = useState([]);
   const [newName, setNewName] = useState("");
   const [mode, setMode] = useState(() => loadLS("pp_mode", "SIZE")); // SIZE | COUNT
   const [teamSize, setTeamSize] = useState(() => loadLS("pp_teamSize", 2));
@@ -28,8 +23,15 @@ export default function PloufPloufBaby() {
   const [copyOK, setCopyOK] = useState(false);
   const [query, setQuery] = useState("");
 
+  // Load players from API
+  useEffect(() => {
+    fetch("/api/players")
+      .then(r => r.json())
+      .then(setPlayers)
+      .catch(() => setPlayers([]));
+  }, []);
+
   // Persist
-  useEffect(() => saveLS("pp_players", players), [players]);
   useEffect(() => saveLS("pp_mode", mode), [mode]);
   useEffect(() => saveLS("pp_teamSize", teamSize), [teamSize]);
   useEffect(() => saveLS("pp_teamCount", teamCount), [teamCount]);
@@ -44,15 +46,40 @@ export default function PloufPloufBaby() {
   const presentPlayersFiltered = useMemo(() => filteredPlayers.filter(p => p.present), [filteredPlayers]); // pour l'affichage
 
   // Actions joueurs
-  const addPlayer = () => {
+  const addPlayer = async () => {
     const trimmed = newName.trim();
     if (!trimmed) return;
-    setPlayers(prev => [...prev, { id: uid(), name: trimmed, present: true }]);
+    const player = { id: uid(), name: trimmed, present: true };
+    await fetch("/api/players", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(player),
+    });
+    setPlayers(prev => [...prev, player]);
     setNewName("");
   };
-  const togglePresent = (id) => setPlayers(prev => prev.map(p => p.id === id ? { ...p, present: !p.present } : p));
-  const removePlayer = (id) => setPlayers(prev => prev.filter(p => p.id !== id));
-  const toggleAll = (val) => setPlayers(prev => prev.map(p => ({ ...p, present: val })));
+  const togglePresent = async (id) => {
+    const p = players.find(pl => pl.id === id);
+    if (!p) return;
+    await fetch(`/api/players/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ present: !p.present }),
+    });
+    setPlayers(prev => prev.map(pl => pl.id === id ? { ...pl, present: !pl.present } : pl));
+  };
+  const removePlayer = async (id) => {
+    await fetch(`/api/players/${id}`, { method: "DELETE" });
+    setPlayers(prev => prev.filter(p => p.id !== id));
+  };
+  const toggleAll = async (val) => {
+    await fetch("/api/players/toggleAll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ present: val }),
+    });
+    setPlayers(prev => prev.map(p => ({ ...p, present: val })));
+  };
 
   // Algos
   const shuffle = (arr) => {
@@ -119,16 +146,22 @@ export default function PloufPloufBaby() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const json = JSON.parse(String(reader.result));
-        if (Array.isArray(json.players)) setPlayers(
-          json.players.map(p => ({
+        if (Array.isArray(json.players)) {
+          const imported = json.players.map(p => ({
             id: p.id || uid(),
             name: p.name,
             present: p.present !== false,
-          }))
-        );
+          }));
+          setPlayers(imported);
+          await fetch("/api/players", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(imported),
+          });
+        }
       } catch {}
     };
     reader.readAsText(file);
