@@ -1,6 +1,4 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
-chcp 65001 >NUL
 
 REM ============================================================
 REM  Assistant de merge interactif (FR) – 2 phases
