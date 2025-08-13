@@ -25,42 +25,55 @@ deploy() {
   docker compose up --build -d
 }
 
-# --- util: MAJ rapide du main (tes 5 commandes) ---
-quick_update_main() {
-  echo "[MAJ] Passage sur '${DEFAULT}'..."
-  git checkout "${DEFAULT}"
-
-  echo "[MAJ] Ajout de tous les fichiers..."
-  if [[ -n "$(git status --porcelain)" ]]; then
-    git add .
-    read -rp "[MAJ] Message de commit [Mise à jour des fichiers en cours] : " MSG
-    MSG="${MSG:-Mise à jour des fichiers en cours}"
-    git commit -m "$MSG"
-  else
-    echo "[MAJ] Aucun changement à committer."
+# --- Étape A : proposer de mettre à jour main depuis origin AVANT tout commit WIP ---
+read -rp "[OPTION] Mettre à jour '${DEFAULT}' depuis origin (pull --rebase) AVANT le commit de sauvegarde ? (y/N) : " UPDATE_FIRST
+if [[ "${UPDATE_FIRST,,}" == "y" ]]; then
+  # Se placer sur '${DEFAULT}' si besoin
+  if [[ "$CURR" != "$DEFAULT" ]]; then
+    echo "[ACTION] Bascule vers '${DEFAULT}'..."
+    git checkout "${DEFAULT}"
+    CURR="${DEFAULT}"
   fi
 
-  echo "[MAJ] Récupération distante (pull --rebase)..."
+  # Si repo sale : stash temporaire
+  STASHED=0
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "[INFO] Modifications locales détectées — stash temporaire le temps d'actualiser '${DEFAULT}'..."
+    git stash push --include-untracked -m "plouf-temp-before-pull"
+    STASHED=1
+  fi
+
+  echo "[MAJ] Pull --rebase depuis origin/${DEFAULT}..."
   git pull origin "${DEFAULT}" --rebase
 
-  echo "[MAJ] Push vers GitHub..."
-  git push origin "${DEFAULT}"
+  # Restaure le stash si on en a créé un
+  if [[ "${STASHED}" -eq 1 ]]; then
+    echo "[INFO] Restauration des changements locaux (stash pop)..."
+    if ! git stash pop; then
+      echo
+      echo "[CONFLIT] Des conflits sont apparus lors du 'stash pop'."
+      echo "Corrige les conflits puis exécute :"
+      echo "  git add . && git commit"
+      echo "Ensuite relance ce script."
+      exit 0
+    fi
+  fi
+fi
 
-  echo "✅ MAJ rapide du main terminée."
-}
-
-# 3) Sauvegarde des modifs locales (WIP) + push adapté
+# --- Étape B : commit WIP + push adapté (APRÈS la mise à jour éventuelle) ---
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "[INFO] Modifications locales détectées sur ${CURR} — création d'un commit de sauvegarde..."
   git add .
   git commit -m "WIP: sauvegarde avant test/merge"
 
   if [[ "$CURR" == _merge_tmp_* ]]; then
+    # Push WIP vers la branche distante d'origine si mappée
     SRC_BRANCH="$(git config --get "branch.${CURR}.ploufSource" || true)"
     if [[ -n "${SRC_BRANCH:-}" ]]; then
       echo "[INFO] Push du WIP vers la branche distante d'origine: origin/${SRC_BRANCH}"
       git push origin HEAD:"${SRC_BRANCH}"
     else
+      # Sinon: upstream si présent
       if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
         echo "[INFO] Push du WIP vers l'upstream de ${CURR}..."
         git pull --rebase
@@ -70,6 +83,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
       fi
     fi
   else
+    # Branche normale : pousser si upstream configuré
     if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
       echo "[INFO] Mise à jour locale (pull --rebase) puis push du WIP..."
       git pull --rebase
@@ -87,14 +101,7 @@ if [[ "$CURR" == _merge_tmp_* ]]; then
   echo "  1) ACCEPTER : fusionner dans '${DEFAULT}' (merge --no-ff), pousser et déployer"
   echo "  2) REFUSER  : revenir sur '${DEFAULT}' et supprimer la branche temporaire"
   echo "  3) ANNULER  : ne rien faire"
-  echo "  4) MAJ rapide du main (add/commit/pull --rebase/push)"
-  read -rp "Votre choix [1/2/3/4] : " CHX
-
-  if [[ "$CHX" == "4" ]]; then
-    quick_update_main
-    echo "ℹ️ Relancez si besoin pour poursuivre l’acceptation/refus."
-    exit 0
-  fi
+  read -rp "Votre choix [1/2/3] : " CHX
 
   if [[ "$CHX" == "1" ]]; then
     echo "[ACTION] Passage sur '${DEFAULT}' et mise à jour..."
@@ -115,7 +122,7 @@ if [[ "$CURR" == _merge_tmp_* ]]; then
     echo "[NETTOYAGE] Suppression de la branche temporaire locale '${CURR}'..."
     git branch -D "${CURR}" || true
 
-    # ➕ NOUVEAU : proposer de supprimer aussi la branche distante d'origine
+    # Proposer suppression de la branche distante d'origine si connue
     SRC_BRANCH="$(git config --get "branch.${CURR}.ploufSource" || true)"
     if [[ -n "${SRC_BRANCH:-}" ]]; then
       read -rp "[OPTION] Supprimer aussi la branche distante 'origin/${SRC_BRANCH}' ? (y/N) : " DELR
@@ -146,52 +153,6 @@ if [[ "$CURR" == _merge_tmp_* ]]; then
 fi
 
 # ============================ PHASE 1 : préparation ============================
-# Option : MAJ rapide du main avant de choisir la branche de test
-read -rp "[OPTION] Faire d’abord une MAJ rapide du main (add/commit/pull --rebase/push) ? (y/N) : " DOUP
-if [[ "${DOUP,,}" == "y" ]]; then
-  quick_update_main
-fi
-
 # Se placer sur la branche par défaut si besoin
 if [[ "$CURR" != "$DEFAULT" ]]; then
-  echo "[INFO] Vous êtes sur '${CURR}'. Le flux de test démarre depuis '${DEFAULT}'."
-  echo "[ACTION] Bascule vers '${DEFAULT}'..."
-  git checkout "${DEFAULT}"
-fi
-
-echo
-echo "[PRÉPARATION] Récupération des branches distantes (origin)..."
-git fetch origin --prune
-
-echo
-echo "--- Branches distantes disponibles (origin) ---"
-git for-each-ref --format='%(refname:short)' refs/remotes/origin | sed 's#^origin/##' | grep -v '^HEAD$' || true
-echo "-----------------------------------------------"
-
-echo
-read -rp "Quelle branche distante voulez-vous tester ? (ex: codex/remove-import/export-buttons ou origin/codex/remove-import/export-buttons) : " BRANCH_INPUT
-BRANCH="${BRANCH_INPUT#origin/}"  # normalise: enlève "origin/" s'il est présent
-
-if [[ -z "${BRANCH}" ]]; then
-  echo "[ANNULATION] Aucune branche saisie."
-  exit 0
-fi
-
-if ! git ls-remote --heads origin "${BRANCH}" >/devnull 2>&1; then
-  echo "[ERREUR] La branche 'origin/${BRANCH}' n'existe pas."
-  exit 1
-fi
-
-# Crée/MAJ la branche temporaire locale depuis origin/<BRANCH>
-TEMP="_merge_tmp_${BRANCH//\//_}"
-echo "[ACTION] Création/MàJ de '${TEMP}' depuis 'origin/${BRANCH}'..."
-git checkout -B "${TEMP}" "origin/${BRANCH}"
-
-# Enregistre le mapping source -> pour push WIP correct plus tard
-git config "branch.${TEMP}.ploufSource" "${BRANCH}"
-
-deploy
-echo
-echo "✅ Branche de test prête : '${TEMP}'."
-echo "➡ Vous pouvez maintenant tester l'application."
-echo "ℹ️ Relancez ce script depuis '${TEMP}' pour ACCEPTER (merge) ou REFUSER (retour ${DEFAULT} + suppression)."
+  echo "[INFO] Vous êtes sur '${CUR
