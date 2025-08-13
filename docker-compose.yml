@@ -4,3 +4,8 @@ services:
     ports:
       - "5002:80"
     restart: unless-stopped
+    volumes:
+      - plouf_data:/app/players.db
+
+volumes:
+  plouf_data:
