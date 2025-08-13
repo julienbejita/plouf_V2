@@ -1,10 +1,7 @@
 @echo off
 
 REM ============================================================
-REM  Assistant de merge interactif (FR) – 2 phases
-REM  Phase 1 (sur main/master) : choisir une branche distante à tester
-REM  Phase 2 (sur _merge_tmp_*) : accepter (merge --no-ff) ou refuser
-REM ============================================================
+
 
 cd /d "%~dp0"
 echo === Assistant de merge interactif (FR) ===
