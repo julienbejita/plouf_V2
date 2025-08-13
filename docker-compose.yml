@@ -1,0 +1,6 @@
+services:
+  plouf:
+    build: .
+    ports:
+      - "5002:80"
+    restart: unless-stopped
