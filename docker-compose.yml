@@ -8,13 +8,13 @@ services:
     volumes:
       - plouf_data:/app/data
     networks:
-      - bejita
+      bejita:
         aliases:
           - plouf_v2
-volumes:
-  plouf_data:
 
+volumes:
+  plouf_data: {}
 
 networks:
-   bejita:
-     external: true
+  bejita:
+    external: true
